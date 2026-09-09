@@ -1,0 +1,106 @@
+openapi: 3.1.0
+info:
+  title: AI Services API
+  description: |
+    REST API for the AI services backend, built with Python and FastAPI, backed by PostgreSQL.
+
+    FastAPI generates the live OpenAPI document automatically at `/docs` (Swagger UI) and
+    `/openapi.json`. This file is the version-controlled skeleton of the contract; keep it in
+    sync with the implemented routers as endpoints are defined.
+
+    NOTE: Concrete AI endpoints, resources, and schemas are not yet designed. The paths below
+    are minimal placeholders illustrating the conventions to follow (versioned prefix,
+    consistent error shape, Pydantic-derived schemas). Replace them as real endpoints land.
+  version: 0.1.0
+  contact:
+    name: Development Team
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server (uvicorn)
+  - url: https://api.example.com
+    description: Production server (placeholder)
+
+paths:
+  /api/v1/health:
+    get:
+      summary: Health check
+      description: Returns service liveness status. Used by orchestration and monitoring.
+      tags:
+        - System
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  # PLACEHOLDER: AI endpoints pending design.
+  # Expected shape (example only, do not implement without a spec):
+  #
+  # /api/v1/<ai-resource>:
+  #   post:
+  #     summary: Run an AI task
+  #     requestBody: JSON body validated by a Pydantic schema
+  #     responses:
+  #       '200': JSON or streamed (text/event-stream) response
+  #       '422': Validation error (FastAPI default)
+  #       '4XX'/'5XX': ErrorResponse
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok]
+          description: Service status indicator
+      required:
+        - status
+
+    ErrorResponse:
+      type: object
+      description: Consistent error envelope returned by custom exception handlers.
+      properties:
+        detail:
+          type: object
+          properties:
+            message:
+              type: string
+              description: Human-readable error message (English)
+            code:
+              type: string
+              description: Machine-readable error code (e.g., NOT_FOUND, VALIDATION_ERROR)
+          required:
+            - message
+      required:
+        - detail
+
+    ValidationErrorResponse:
+      type: object
+      description: Default FastAPI 422 response for request validation failures.
+      properties:
+        detail:
+          type: array
+          items:
+            type: object
+            properties:
+              loc:
+                type: array
+                items:
+                  anyOf:
+                    - type: string
+                    - type: integer
+              msg:
+                type: string
+              type:
+                type: string
+
+tags:
+  - name: System
+    description: Health and operational endpoints
+  # PLACEHOLDER: add one tag per AI resource/feature as endpoints are defined
