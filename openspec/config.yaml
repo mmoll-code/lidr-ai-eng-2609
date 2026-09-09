@@ -1,0 +1,7 @@
+schema: spec-driven
+
+# Project context shown to AI when creating OpenSpec artifacts.
+# Keep this minimal — full rules live in docs/base-standards.md (single source of truth).
+context: |
+  Follow docs/base-standards.md and linked standards (backend, frontend, documentation, OpenSpec tasks).
+  Stack: FastAPI + PostgreSQL backend, Next.js/TypeScript frontend.
