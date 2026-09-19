@@ -1,0 +1,14 @@
+[project]
+name = "estimador-cag"
+version = "0.1.0"
+description = "CAG-based software development estimator"
+readme = "README.md"
+authors = [
+    { name = "mmoll-code", email = "mmollcuneo@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic-settings",
+]
