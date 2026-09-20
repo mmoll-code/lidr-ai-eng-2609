@@ -1,3 +1,49 @@
-from fastapi import APIRouter
+"""Estimation HTTP endpoints."""
 
-router = APIRouter(prefix="/estimations", tags=["estimations"])
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, HTTPException
+
+from app.schemas.estimations import EstimationRequest, EstimationResponse, TokenUsage
+from app.services.llm_service import LlmConfigurationError, generate_estimation
+from app.services.pricing import estimate_cost_usd
+
+router = APIRouter(prefix="/api/v1", tags=["estimations"])
+
+
+@router.post("/estimate", response_model=EstimationResponse)
+async def create_estimation(request: EstimationRequest) -> EstimationResponse:
+    try:
+        result = await generate_estimation(request.transcription)
+    except LlmConfigurationError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="LLM provider is not configured correctly",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="LLM provider request failed",
+        ) from exc
+
+    usage: TokenUsage | None = None
+    if result.input_tokens is not None or result.output_tokens is not None:
+        total: int | None = None
+        if result.input_tokens is not None and result.output_tokens is not None:
+            total = result.input_tokens + result.output_tokens
+        usage = TokenUsage(
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            total_tokens=total,
+        )
+
+    return EstimationResponse(
+        estimation=result.content,
+        model=result.model,
+        provider=result.provider,
+        usage=usage,
+        estimated_cost_usd=estimate_cost_usd(
+            result.model, result.input_tokens, result.output_tokens
+        ),
+        generated_at=datetime.now(UTC),
+    )
