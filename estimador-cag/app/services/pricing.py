@@ -16,6 +16,9 @@ MODEL_PRICING: dict[str, ModelPricing] = {
     "claude-3-5-sonnet-20240620": ModelPricing(
         input_per_million=3.00, output_per_million=15.00
     ),
+    "claude-haiku-4-5-20251001": ModelPricing(
+        input_per_million=1.00, output_per_million=5.00
+    ),
 }
 
 

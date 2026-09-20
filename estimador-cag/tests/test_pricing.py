@@ -20,6 +20,11 @@ class TestEstimateCostUsd:
         cost = estimate_cost_usd("claude-3-5-sonnet-20240620", 1_000_000, 1_000_000)
         assert cost == 18.0
 
+    def test_claude_haiku_4_5_computes_expected_cost(self) -> None:
+        # claude-haiku-4-5-20251001: $1.00 / 1M input, $5.00 / 1M output
+        cost = estimate_cost_usd("claude-haiku-4-5-20251001", 1_000_000, 1_000_000)
+        assert cost == 6.0
+
     def test_unknown_model_returns_none(self) -> None:
         assert estimate_cost_usd("unknown-model", 100, 50) is None
 
