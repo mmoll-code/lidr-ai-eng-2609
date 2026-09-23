@@ -63,6 +63,24 @@ curl -X POST http://localhost:8000/api/v1/estimate \
 
 OpenAPI docs: `http://localhost:8000/docs`
 
+## Chat UI
+
+Streamlit chat interface that sends meeting transcriptions to the Estimator API and shows the resulting estimation.
+
+The LLM API key stays in the backend `.env` — the UI only needs the API base URL.
+
+1. Start the API (see **Run** above).
+2. In another terminal:
+
+```bash
+uv run streamlit run ui/chat_app.py
+```
+
+Optional UI settings in `.env`:
+
+- `ESTIMATOR_API_URL` — default `http://localhost:8000`
+- `ESTIMATOR_REQUEST_TIMEOUT_SECONDS` — default `120`
+
 ## Project structure
 
 ```
@@ -78,4 +96,8 @@ app/
 │   └── pricing.py     # Approximate USD cost estimation
 └── context/
     └── examples.py    # Static example estimations (CAG context)
+ui/
+├── chat_app.py        # Streamlit chat entrypoint
+├── api_client.py      # HTTP client for POST /api/v1/estimate
+└── config.py          # UI settings (API URL, timeout)
 ```
