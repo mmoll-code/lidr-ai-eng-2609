@@ -1,6 +1,6 @@
 ---
 description: Backend development standards, best practices, and conventions for the Python/FastAPI backend exposing AI services, including project layout, API patterns, PostgreSQL access patterns, migrations, testing with pytest, and security practices
-globs: ["backend/app/**/*.py", "backend/tests/**/*.py", "backend/alembic/**/*", "backend/pyproject.toml"]
+globs: ["backend/app/**/*.py", "backend/tests/**/*.py", "backend/alembic/**/*", "backend/pyproject.toml", "estimador-cag/app/**/*.py", "estimador-cag/ui/**/*.py", "estimador-cag/tests/**/*.py", "estimador-cag/pyproject.toml"]
 alwaysApply: true
 ---
 
@@ -14,6 +14,7 @@ alwaysApply: true
   - [Database](#database)
   - [Testing Framework](#testing-framework)
   - [Development Tools](#development-tools)
+  - [Dependency Management](#dependency-management)
 - [Architecture Overview](#architecture-overview)
   - [Layered Architecture](#layered-architecture)
   - [Project Structure](#project-structure)
@@ -74,6 +75,15 @@ This document outlines the best practices, conventions, and standards for the ba
 - **uv** (or pip + venv): Dependency and environment management
 - **ruff**: Linting and formatting
 - **mypy**: Static type checking (strict mode)
+
+### Dependency Management
+
+- **Add through `uv` only**: Use `uv add <package>` (or `uv add --dev <package>` for the `dev` group); never hand-edit the `dependencies` list in `pyproject.toml`
+- **Every dependency is constrained**: No bare package names. Each entry declares at least a lower bound pinned to the version that was tested (`"fastapi>=0.115.0"`), which is what `uv add` produces by default
+- **Compatible-release for major-version-sensitive packages**: AI provider SDKs and other libraries with frequent breaking changes use `~=` (`"openai~=3.16"`) so a major bump requires an explicit decision
+- **Lock file is source of truth**: `uv.lock` is committed and updated in the same commit as any `pyproject.toml` dependency change
+- **Reproducible installs**: Local setup and CI use `uv sync --frozen`; upgrades happen deliberately with `uv lock --upgrade-package <package>`, never as a side effect of an install
+- **Review on change**: Any dependency addition or upgrade is called out in the commit message and PR description with the reason
 
 ## Architecture Overview
 
