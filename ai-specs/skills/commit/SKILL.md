@@ -44,7 +44,13 @@ If the user **explicitly** requested no git operations (e.g. "no PR", "only comm
 ## 1. Inspect current state
 
 - Run `git status` and `git diff` (and `git diff --staged` if needed) to list all modified, added, and deleted files.
-- Identify the current branch. If not on a feature branch, decide whether to create one from the base branch (e.g. `main` or `develop`) before committing.
+- Identify the current branch.
+- **Branch naming gate** (per `docs/base-standards.md` section 8):
+  - Valid pattern: `<type>/session-<N>-<slug>` where `<type>` is `feature`, `fix`, `chore`, `docs`, or `refactor`.
+  - `main` is exempt.
+  - Legacy branches that predate this rule (no `session-<N>`) may proceed after noting they are legacy; do not rename them in this skill.
+  - If the current branch is not `main`, does not match the pattern, and is not a clear legacy branch, **stop**. Ask the user for the session number and use the `new-branch` skill (or rename/create a conforming branch) before committing or pushing.
+  - If not on a feature branch at all, create one via the `new-branch` skill from `main` before committing — do not invent a session number.
 
 ## 2. Resolve scope: full commit vs feature-scoped commit
 
@@ -77,7 +83,7 @@ If the user **explicitly** requested no git operations (e.g. "no PR", "only comm
 
 - Use the **GitHub CLI (`gh`)** for all GitHub operations (per repository standards).
 - Create or update the PR for the current branch:
-  - **Title**: Clear, aligned with the commit (e.g. include ticket ID if applicable: `[SCRUM-123] Add candidate filters to position list`).
+  - **Title**: Clear, aligned with the commit. **Require the session number** extracted from the branch name (e.g. `[Session 2] Add Streamlit chat UI`). Optionally also include a ticket ID (e.g. `[Session 2][SCRUM-123] Add candidate filters`).
   - **Description**: Summarize the change set, link to the ticket if relevant, and note any testing or follow-ups.
 - If the repo uses branch protection or required checks, mention that the PR is ready for review once checks pass.
 
@@ -89,7 +95,8 @@ If the user **explicitly** requested no git operations (e.g. "no PR", "only comm
 
 # References
 
-- `docs/base-standards.md`: English-only for commit messages and technical artifacts.
+- `docs/base-standards.md`: English-only for commit messages and technical artifacts; section 8 Branch Naming and Session Numbering (authoritative branch contract).
+- `ai-specs/skills/new-branch/SKILL.md`: create branches matching `<type>/session-<N>-<slug>`.
 - `docs/backend-standards.md` and `docs/frontend-standards.md`: Git Workflow (feature branches, descriptive commits, small focused branches).
 - Repository git workflow conventions: Use `gh` for GitHub and PR creation; optional ticket-based branch and PR linking.
 

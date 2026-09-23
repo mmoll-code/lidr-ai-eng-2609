@@ -490,6 +490,7 @@ class Settings(BaseSettings):
 
 ### Git Workflow
 
+- **Branch Naming**: Follow `docs/base-standards.md` section 8 (`<type>/session-<N>-<slug>`); use the `new-branch` skill when creating branches
 - **Feature Branches**: Develop features in separate branches with clear descriptive names
 - **Descriptive Commits**: Write descriptive commit messages in English
 - **Code Review**: Review before merging

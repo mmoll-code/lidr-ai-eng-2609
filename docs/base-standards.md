@@ -70,3 +70,24 @@ Required order:
 
 Do not apply direct code-only fixes in this window without updating OpenSpec artifacts.
 
+## 8. Branch Naming and Session Numbering
+
+Every new branch created in this repository must encode the course/delivery **session number** for the feature or deliverable being worked on.
+
+### Naming contract
+
+- Pattern: `<type>/session-<N>-<slug>`
+- `<type>` is one of: `feature` (default), `fix`, `chore`, `docs`, `refactor`
+- `<N>` is the session number as a plain integer with no zero padding (e.g. `2`, not `02`)
+- `<slug>` is a lowercase kebab-case description of the deliverable
+- Example: `feature/session-2-streamlit-chat-ui`
+- Frontend parallel work may append `-frontend` to the slug: `feature/session-2-chat-ui-frontend`
+
+### Rules
+
+- **Never guess the session number.** It must come from the user's request, or the agent may scan existing `session-<N>` branches, propose the highest known number (or next), and ask the user to confirm before creating the branch.
+- `main` is exempt from this naming contract.
+- Existing legacy branches (created before this rule) are not renamed; the rule applies to **newly created** branches only.
+- When creating a branch, use the `new-branch` skill.
+- When committing or opening a PR, the `commit` skill validates the branch name and includes the session number in the PR title (e.g. `[Session 2] Add Streamlit chat UI`).
+

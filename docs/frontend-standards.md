@@ -241,6 +241,7 @@ it("renders the item name", () => {
 
 ## Development Workflow
 
+- **Branch Naming**: Follow `docs/base-standards.md` section 8 (`<type>/session-<N>-<slug>`); use the `new-branch` skill when creating branches. Append `-frontend` to the slug for parallel frontend work (e.g. `feature/session-2-chat-ui-frontend`)
 - **Feature Branches**: Develop features in separate branches, adding descriptive suffix "-frontend" to allow working in parallel
 - **Descriptive Commits**: Write descriptive commit messages in English
 - **Code Review**: Code review before merging
