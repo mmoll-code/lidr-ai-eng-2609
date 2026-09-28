@@ -10,7 +10,8 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 import streamlit as st
 
-from ui.api_client import Estimation, EstimatorApiError, request_estimation
+from ui.api_client import Estimation, EstimatorApiError, stream_estimation
+from ui.config import ui_settings
 
 
 def build_usage_caption(estimation: Estimation) -> str:
@@ -32,55 +33,59 @@ def _render_history() -> None:
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
-            caption = message.get("caption")
-            if caption:
-                st.caption(caption)
+
+
+def _stream_url() -> str:
+    return f"{ui_settings.estimator_api_url.rstrip('/')}/api/v1/estimate/stream"
 
 
 def main() -> None:
     st.set_page_config(page_title="Estimador CAG", page_icon="📐")
     st.title("Estimador CAG")
-    st.caption(
-        "Paste a meeting transcription to get a software effort estimation."
-    )
+    st.caption("Paste a meeting transcription. The answer streams token by token.")
 
     _ensure_message_history()
     _render_history()
 
     prompt = st.chat_input("Paste the meeting transcription...")
-    if not prompt:
-        return
+    if prompt:
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+        with st.chat_message("assistant"):
+            placeholder = st.empty()
+            full_response = ""
+            try:
+                for chunk in stream_estimation(prompt):
+                    full_response += chunk
+                    placeholder.markdown(full_response + "▍")
+                placeholder.markdown(full_response)
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": full_response}
+                )
+            except EstimatorApiError as exc:
+                error_text = str(exc)
+                st.error(error_text)
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": error_text}
+                )
+            except ValueError as exc:
+                error_text = str(exc)
+                st.error(error_text)
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": error_text}
+                )
 
-    with st.chat_message("assistant"):
-        try:
-            with st.spinner("Generating estimation..."):
-                estimation = request_estimation(prompt)
-            st.markdown(estimation.content)
-            caption = build_usage_caption(estimation)
-            st.caption(caption)
-            st.session_state.messages.append(
-                {
-                    "role": "assistant",
-                    "content": estimation.content,
-                    "caption": caption,
-                }
-            )
-        except EstimatorApiError as exc:
-            error_text = str(exc)
-            st.error(error_text)
-            st.session_state.messages.append(
-                {"role": "assistant", "content": error_text}
-            )
-        except ValueError as exc:
-            error_text = str(exc)
-            st.error(error_text)
-            st.session_state.messages.append(
-                {"role": "assistant", "content": error_text}
-            )
+    with st.sidebar:
+        st.header("Service")
+        st.code(_stream_url(), language="text")
+        st.markdown(f"**Primary model:** `{ui_settings.primary_model}`")
+        st.markdown(f"**Fallback model:** `{ui_settings.fallback_model}`")
+        st.markdown(f"**Cache TTL:** `{ui_settings.cache_ttl}s`")
+        if st.button("Clear chat history"):
+            st.session_state.messages = []
+            st.rerun()
 
 
 if __name__ == "__main__":

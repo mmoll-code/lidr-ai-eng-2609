@@ -24,28 +24,22 @@ def _sample_estimation(**overrides: object) -> Estimation:
     return Estimation(**data)  # type: ignore[arg-type]
 
 
-def _success_response(estimation: Estimation) -> MagicMock:
-    payload = {
-        "estimation": estimation.content,
-        "model": estimation.model,
-        "provider": estimation.provider,
-        "usage": (
-            {
-                "input_tokens": None,
-                "output_tokens": None,
-                "total_tokens": estimation.total_tokens,
-            }
-            if estimation.total_tokens is not None
-            else None
-        ),
-        "estimated_cost_usd": estimation.estimated_cost_usd,
-        "generated_at": "2026-03-22T13:00:00+00:00",
-    }
+def _sse_lines(content: str) -> list[str]:
+    lines = ["event: token"]
+    for line in content.split("\n"):
+        lines.append(f"data: {line}")
+    lines.extend(["", "event: done", "data: [DONE]", ""])
+    return lines
+
+
+def _stream_context(content: str) -> MagicMock:
     response = MagicMock()
-    response.status_code = 200
-    response.json.return_value = payload
     response.raise_for_status = MagicMock()
-    return response
+    response.iter_lines.return_value = _sse_lines(content)
+    context = MagicMock()
+    context.__enter__.return_value = response
+    context.__exit__.return_value = False
+    return context
 
 
 def _run_chat_app() -> AppTest:
@@ -77,9 +71,9 @@ class TestChatApp:
         estimation = _sample_estimation()
 
         with patch(
-            "ui.api_client.httpx.post",
-            return_value=_success_response(estimation),
-        ) as mock_post:
+            "ui.api_client.httpx.stream",
+            return_value=_stream_context(estimation.content),
+        ) as mock_stream:
             at = _run_chat_app()
             at.chat_input[0].set_value("Client needs a CRM.").run()
 
@@ -88,19 +82,20 @@ class TestChatApp:
         assert at.chat_message[0].name == "user"
         assert at.chat_message[1].name == "assistant"
         assert "Client needs a CRM." in at.chat_message[0].markdown[0].value
-        assert "Estimation: CRM" in at.chat_message[1].markdown[0].value
-        mock_post.assert_called_once()
-        assert mock_post.call_args.kwargs["json"] == {
+        assert "Estimation: CRM" in at.chat_message[1].markdown[-1].value
+        mock_stream.assert_called_once()
+        assert mock_stream.call_args.kwargs["json"] == {
             "transcription": "Client needs a CRM."
         }
+        assert any("Primary model" in item.value for item in at.sidebar.markdown)
 
     def test_history_persists_across_submissions(self) -> None:
         first = _sample_estimation(content="## Estimation: First")
         second = _sample_estimation(content="## Estimation: Second")
 
         with patch(
-            "ui.api_client.httpx.post",
-            side_effect=[_success_response(first), _success_response(second)],
+            "ui.api_client.httpx.stream",
+            side_effect=[_stream_context(first.content), _stream_context(second.content)],
         ):
             at = _run_chat_app()
             at.chat_input[0].set_value("First transcription").run()
@@ -111,15 +106,15 @@ class TestChatApp:
         assert at.chat_message[0].name == "user"
         assert "First transcription" in at.chat_message[0].markdown[0].value
         assert at.chat_message[1].name == "assistant"
-        assert "Estimation: First" in at.chat_message[1].markdown[0].value
+        assert "Estimation: First" in at.chat_message[1].markdown[-1].value
         assert at.chat_message[2].name == "user"
         assert "Second transcription" in at.chat_message[2].markdown[0].value
         assert at.chat_message[3].name == "assistant"
-        assert "Estimation: Second" in at.chat_message[3].markdown[0].value
+        assert "Estimation: Second" in at.chat_message[3].markdown[-1].value
 
     def test_api_error_renders_without_losing_history(self) -> None:
         with patch(
-            "ui.api_client.httpx.post",
+            "ui.api_client.httpx.stream",
             side_effect=httpx.ConnectError("Connection refused"),
         ):
             at = _run_chat_app()

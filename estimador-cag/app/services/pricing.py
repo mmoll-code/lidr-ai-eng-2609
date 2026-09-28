@@ -16,10 +16,17 @@ MODEL_PRICING: dict[str, ModelPricing] = {
     "claude-3-5-sonnet-20240620": ModelPricing(
         input_per_million=3.00, output_per_million=15.00
     ),
+    "claude-haiku-4-5": ModelPricing(input_per_million=1.00, output_per_million=5.00),
     "claude-haiku-4-5-20251001": ModelPricing(
         input_per_million=1.00, output_per_million=5.00
     ),
+    "claude-sonnet-4-5": ModelPricing(input_per_million=3.00, output_per_million=15.00),
 }
+
+
+def normalise_model_name(model: str) -> str:
+    """Strip provider prefixes such as ``anthropic/`` that LiteLLM may emit."""
+    return model.split("/", 1)[1] if "/" in model else model
 
 
 def estimate_cost_usd(
@@ -31,7 +38,7 @@ def estimate_cost_usd(
     if input_tokens is None or output_tokens is None:
         return None
 
-    pricing = MODEL_PRICING.get(model)
+    pricing = MODEL_PRICING.get(normalise_model_name(model))
     if pricing is None:
         return None
 

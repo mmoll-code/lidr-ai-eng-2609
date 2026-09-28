@@ -1,0 +1,52 @@
+# Docker Compose configuration for local development.
+# For production, remove the bind mount and the --reload flag.
+
+services:
+  estimador:
+    build: .
+    container_name: estimador-cag
+    ports:
+      - "8000:8000"
+
+    env_file:
+      - .env
+
+    # Override REDIS_URL for the in-network Redis service. The .env value
+    # (redis://localhost:6379) is meant for running uvicorn outside Docker.
+    environment:
+      REDIS_URL: redis://redis:6379
+
+    depends_on:
+      redis:
+        condition: service_healthy
+
+    volumes:
+      - ./app:/app/app
+
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    container_name: estimador-cag-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  redis_data:

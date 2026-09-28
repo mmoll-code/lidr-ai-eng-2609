@@ -25,6 +25,15 @@ class TestEstimateCostUsd:
         cost = estimate_cost_usd("claude-haiku-4-5-20251001", 1_000_000, 1_000_000)
         assert cost == 6.0
 
+    def test_claude_haiku_alias_matches_dated_model(self) -> None:
+        assert estimate_cost_usd("claude-haiku-4-5", 1_000_000, 1_000_000) == 6.0
+
+    def test_claude_sonnet_4_5_computes_expected_cost(self) -> None:
+        assert estimate_cost_usd("claude-sonnet-4-5", 1_000_000, 1_000_000) == 18.0
+
+    def test_provider_prefix_is_stripped(self) -> None:
+        assert estimate_cost_usd("anthropic/claude-haiku-4-5", 1_000_000, 1_000_000) == 6.0
+
     def test_unknown_model_returns_none(self) -> None:
         assert estimate_cost_usd("unknown-model", 100, 50) is None
 

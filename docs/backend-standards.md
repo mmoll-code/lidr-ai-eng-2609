@@ -265,8 +265,9 @@ Conventions to follow once AI features are implemented:
 
 - Encapsulate each AI provider behind an interface in `app/domain/` with the implementation in `app/infrastructure/ai/`; services must not call provider SDKs directly
 - Keep prompts and model parameters in version-controlled configuration, not inline strings
-- Use async calls for all provider I/O; apply timeouts and retries with backoff
-- For long-running generations, prefer streaming responses (`StreamingResponse`) or background jobs
+- Use async calls for provider I/O when the SDK exposes an async client; apply timeouts and retries with backoff
+- The estimator's LLM layer is an exception: LiteLLM's `Router` and `redis-py` are synchronous, matching the reference implementation. Keep that layer synchronous and bridge it onto the event loop with `loop.run_in_executor` in the SSE route. Do not call those sync clients directly inside `async def` handlers
+- For long-running generations, prefer streaming responses (SSE via `sse-starlette`) or background jobs
 - Never log prompts/completions containing sensitive user data; log request IDs and latency instead
 - Mock AI providers in unit tests; never call real providers from the test suite
 
@@ -459,7 +460,7 @@ async def test_get_item_returns_200() -> None:
 
 ## Performance Best Practices
 
-- **Async everywhere**: All I/O (database, AI providers, HTTP) must be async; never block the event loop with sync calls
+- **Async for request I/O**: Database and HTTP client calls must be async and must not block the event loop. The estimator LLM layer is the documented exception: LiteLLM and the Redis exact-match cache are synchronous, and the SSE endpoint consumes that sync generator through `run_in_executor`
 - **Avoid N+1 queries**: Use eager loading (`selectinload`) for related data
 - **Select specific columns** when full rows are not needed
 - **Indexes**: Ensure indexes for frequently queried fields (see [Data Model](./data-model.md))

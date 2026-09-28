@@ -18,7 +18,10 @@ class TestHealth:
     async def test_health_returns_ok(self, client) -> None:
         response = await client.get("/health")
         assert response.status_code == 200
-        assert response.json() == {"status": "ok"}
+        body = response.json()
+        assert body["status"] == "ok"
+        assert body["version"] == "0.1.0"
+        assert body["environment"]
 
 
 class TestOpenApiMetadata:
@@ -36,6 +39,7 @@ class TestOpenApiMetadata:
         response = await client.get("/openapi.json")
         paths = response.json()["paths"]
         assert "/api/v1/estimate" in paths
+        assert "/api/v1/estimate/stream" in paths
         assert "/health" in paths
 
     @pytest.mark.asyncio

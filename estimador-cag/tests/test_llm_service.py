@@ -1,169 +1,127 @@
 """Unit tests for the LLM estimation service."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from collections.abc import Iterator
 
 import pytest
 
-from app.context.examples import ESTIMATION_EXAMPLES
+from app.config import Settings
+from app.services import llm_service
 from app.services.llm_service import (
+    GenerationOptions,
     LlmConfigurationError,
     build_system_prompt,
     generate_estimation,
 )
 
 
+def _fake_response(*, estimation: str = "## Estimation\nTotal hours: 10", finish_reason: str = "stop") -> dict:
+    return {
+        "estimation": estimation,
+        "model": "gpt-4o-mini",
+        "provider": "openai",
+        "finish_reason": finish_reason,
+        "usage": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150},
+        "latency_ms": 12,
+        "estimated_cost_usd": 0.000045,
+        "cache_hit": False,
+    }
+
+
+@pytest.fixture
+def call_log(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[dict]]:
+    calls: list[dict] = []
+
+    def fake(
+        *,
+        system_prompt: str,
+        user_message: str,
+        model_override: str | None,
+        max_tokens: int,
+        thinking_budget: int | None,
+    ) -> dict:
+        calls.append(
+            {
+                "system_prompt": system_prompt,
+                "user_message": user_message,
+                "model_override": model_override,
+                "max_tokens": max_tokens,
+                "thinking_budget": thinking_budget,
+            }
+        )
+        finish_reason = "length" if max_tokens <= 200 else "stop"
+        return _fake_response(finish_reason=finish_reason)
+
+    monkeypatch.setattr(llm_service, "_invoke_llm", fake)
+    yield calls
+
+
 class TestBuildSystemPrompt:
-    def test_includes_role_and_examples(self) -> None:
+    def test_includes_role_rates_and_examples(self) -> None:
         prompt = build_system_prompt()
 
-        assert "expert software estimator" in prompt.lower()
-        assert "Example 1" in prompt
-        assert "Example 2" in prompt
-        assert "Meeting summary" in prompt
-        assert "Estimation" in prompt
+        assert "senior software consultant" in prompt.lower()
+        assert "62.50 EUR/hour" in prompt
+        assert "--- EXAMPLE 1 ---" in prompt
+        assert "--- EXAMPLE 2 ---" in prompt
+        assert "| Task | Hours | Cost (EUR) |" in prompt
 
-        for example in ESTIMATION_EXAMPLES:
-            assert example["meeting_summary"].strip()[:40] in prompt
+    def test_json_format_renders_reference_block(self) -> None:
+        prompt = build_system_prompt(example_format="json", num_examples=2)
+        assert "Reference examples (JSON):" in prompt
+
+    def test_use_examples_false_omits_examples(self) -> None:
+        prompt = build_system_prompt(use_examples=False)
+        assert "EXAMPLE 1" not in prompt
+        assert "Reference examples" not in prompt
+
+    def test_inline_cleaning_adds_instruction_block(self) -> None:
+        prompt = build_system_prompt(inline_cleaning=True)
+        assert "Informal small talk" in prompt
 
 
 class TestGenerateEstimation:
-    @pytest.mark.asyncio
-    async def test_rejects_empty_transcription(self) -> None:
+    def test_rejects_empty_transcription(self) -> None:
         with pytest.raises(ValueError, match="empty"):
-            await generate_estimation("")
-
+            generate_estimation("")
         with pytest.raises(ValueError, match="empty"):
-            await generate_estimation("   ")
+            generate_estimation("   ")
 
-    @pytest.mark.asyncio
-    async def test_openai_returns_estimation(self) -> None:
-        mock_choice = MagicMock()
-        mock_choice.message.content = "## Estimation: Test Project\nTotal: 100 hours"
-        mock_usage = MagicMock()
-        mock_usage.prompt_tokens = 100
-        mock_usage.completion_tokens = 50
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-        mock_response.usage = mock_usage
+    def test_default_call_returns_cache_and_cost_fields(self, call_log: list[dict]) -> None:
+        result = generate_estimation("Client needs a CRM with contacts and deals.")
 
-        mock_client = MagicMock()
-        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+        assert result["estimation"].startswith("## Estimation")
+        assert result["provider"] == "openai"
+        assert result["model"] == "gpt-4o-mini"
+        assert result["estimated_cost_usd"] == 0.000045
+        assert result["cache_hit"] is False
+        assert result["preprocessing"] == "none"
+        assert result["extracted_requirements"] is None
+        assert result["usage"]["preprocessing_input_tokens"] == 0
+        assert len(call_log) == 1
+        assert "Client needs a CRM with contacts and deals." in call_log[0]["user_message"]
 
-        with (
-            patch("app.services.llm_service.settings") as mock_settings,
-            patch(
-                "app.services.llm_service.AsyncOpenAI",
-                return_value=mock_client,
-            ) as mock_openai_cls,
-        ):
-            mock_settings.llm_provider = "openai"
-            mock_settings.llm_model = "gpt-4o-mini"
-            mock_settings.openai_api_key = "test-key"
+    def test_two_phase_invokes_llm_twice(self, call_log: list[dict]) -> None:
+        result = generate_estimation(
+            "Client needs a CRM.",
+            GenerationOptions(preprocessing="two_phase"),
+        )
 
-            result = await generate_estimation(
-                "Client needs a CRM with contacts and deals."
-            )
+        assert len(call_log) == 2
+        assert result["preprocessing"] == "two_phase"
+        assert result["extracted_requirements"] == result["estimation"]
+        assert call_log[1]["user_message"] == result["extracted_requirements"]
+        assert result["estimated_cost_usd"] == pytest.approx(0.00009)
+        assert result["usage"]["preprocessing_input_tokens"] == 100
 
-        assert result.content == "## Estimation: Test Project\nTotal: 100 hours"
-        assert result.provider == "openai"
-        assert result.model == "gpt-4o-mini"
-        assert result.input_tokens == 100
-        assert result.output_tokens == 50
-        mock_openai_cls.assert_called_once_with(api_key="test-key")
-        create_kwargs = mock_client.chat.completions.create.await_args.kwargs
-        assert create_kwargs["model"] == "gpt-4o-mini"
-        messages = create_kwargs["messages"]
-        assert messages[0]["role"] == "system"
-        assert "expert software estimator" in messages[0]["content"].lower()
-        assert messages[1]["role"] == "user"
-        assert "Client needs a CRM with contacts and deals." in messages[1]["content"]
+    def test_model_override_is_forwarded(self, call_log: list[dict]) -> None:
+        generate_estimation("Some transcription", GenerationOptions(model="gpt-4o"))
+        assert call_log[0]["model_override"] == "gpt-4o"
 
-    @pytest.mark.asyncio
-    async def test_openai_tolerates_missing_usage(self) -> None:
-        mock_choice = MagicMock()
-        mock_choice.message.content = "## Estimation: No Usage"
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-        mock_response.usage = None
-
-        mock_client = MagicMock()
-        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
-
-        with (
-            patch("app.services.llm_service.settings") as mock_settings,
-            patch(
-                "app.services.llm_service.AsyncOpenAI",
-                return_value=mock_client,
-            ),
-        ):
-            mock_settings.llm_provider = "openai"
-            mock_settings.llm_model = "gpt-4o-mini"
-            mock_settings.openai_api_key = "test-key"
-
-            result = await generate_estimation("Some transcription")
-
-        assert result.content == "## Estimation: No Usage"
-        assert result.input_tokens is None
-        assert result.output_tokens is None
-
-    @pytest.mark.asyncio
-    async def test_missing_openai_api_key_raises(self) -> None:
-        with patch("app.services.llm_service.settings") as mock_settings:
-            mock_settings.llm_provider = "openai"
-            mock_settings.llm_model = "gpt-4o-mini"
-            mock_settings.openai_api_key = ""
-
-            with pytest.raises(LlmConfigurationError, match="OpenAI API key"):
-                await generate_estimation("Some transcription")
-
-    @pytest.mark.asyncio
-    async def test_unsupported_provider_raises(self) -> None:
-        with patch("app.services.llm_service.settings") as mock_settings:
-            mock_settings.llm_provider = "unknown"
-            mock_settings.llm_model = "some-model"
-
-            with pytest.raises(LlmConfigurationError, match="Unsupported LLM provider"):
-                await generate_estimation("Some transcription")
-
-    @pytest.mark.asyncio
-    async def test_anthropic_returns_estimation(self) -> None:
-        mock_block = MagicMock()
-        mock_block.type = "text"
-        mock_block.text = "## Estimation: Accounting Platform\nTotal: 80 hours"
-        mock_usage = MagicMock()
-        mock_usage.input_tokens = 200
-        mock_usage.output_tokens = 80
-        mock_response = MagicMock()
-        mock_response.content = [mock_block]
-        mock_response.usage = mock_usage
-
-        mock_client = MagicMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
-
-        with (
-            patch("app.services.llm_service.settings") as mock_settings,
-            patch(
-                "app.services.llm_service.AsyncAnthropic",
-                return_value=mock_client,
-            ) as mock_anthropic_cls,
-        ):
-            mock_settings.llm_provider = "anthropic"
-            mock_settings.llm_model = "claude-3-5-sonnet-20240620"
-            mock_settings.anthropic_api_key = "test-anthropic-key"
-
-            result = await generate_estimation(
-                "Client needs an accounting portal."
-            )
-
-        assert result.content == "## Estimation: Accounting Platform\nTotal: 80 hours"
-        assert result.provider == "anthropic"
-        assert result.model == "claude-3-5-sonnet-20240620"
-        assert result.input_tokens == 200
-        assert result.output_tokens == 80
-        mock_anthropic_cls.assert_called_once_with(api_key="test-anthropic-key")
-        create_kwargs = mock_client.messages.create.await_args.kwargs
-        assert create_kwargs["model"] == "claude-3-5-sonnet-20240620"
-        assert "expert software estimator" in create_kwargs["system"].lower()
-        assert "Client needs an accounting portal." in create_kwargs["messages"][0][
-            "content"
-        ]
+    def test_missing_api_keys_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            llm_service,
+            "get_settings",
+            lambda: Settings(openai_api_key="", anthropic_api_key="", _env_file=None),
+        )
+        with pytest.raises(LlmConfigurationError, match="OPENAI_API_KEY"):
+            generate_estimation("Some transcription")

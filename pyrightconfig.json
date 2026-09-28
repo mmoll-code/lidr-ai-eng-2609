@@ -1,0 +1,8 @@
+{
+  "venvPath": "estimador-cag",
+  "venv": ".venv",
+  "pythonVersion": "3.12",
+  "executionEnvironments": [
+    { "root": "estimador-cag" }
+  ]
+}

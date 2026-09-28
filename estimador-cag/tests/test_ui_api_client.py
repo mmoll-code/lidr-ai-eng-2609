@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from ui.api_client import Estimation, EstimatorApiError, request_estimation
+from ui.api_client import Estimation, EstimatorApiError, request_estimation, stream_estimation
 
 
 def _success_payload() -> dict:
@@ -81,9 +81,11 @@ class TestRequestEstimation:
             response=mock_response,
         )
 
-        with patch("ui.api_client.httpx.post", return_value=mock_response):
-            with pytest.raises(EstimatorApiError, match="not configured"):
-                request_estimation("Some transcription")
+        with (
+            patch("ui.api_client.httpx.post", return_value=mock_response),
+            pytest.raises(EstimatorApiError, match="not configured"),
+        ):
+            request_estimation("Some transcription")
 
     def test_502_raises_estimator_api_error(self) -> None:
         mock_response = MagicMock()
@@ -95,22 +97,84 @@ class TestRequestEstimation:
             response=mock_response,
         )
 
-        with patch("ui.api_client.httpx.post", return_value=mock_response):
-            with pytest.raises(EstimatorApiError, match="request failed"):
-                request_estimation("Some transcription")
+        with (
+            patch("ui.api_client.httpx.post", return_value=mock_response),
+            pytest.raises(EstimatorApiError, match="request failed"),
+        ):
+            request_estimation("Some transcription")
 
     def test_connect_error_raises_estimator_api_error(self) -> None:
         with patch(
             "ui.api_client.httpx.post",
             side_effect=httpx.ConnectError("Connection refused"),
-        ):
-            with pytest.raises(EstimatorApiError, match="connect"):
-                request_estimation("Some transcription")
+        ), pytest.raises(EstimatorApiError, match="connect"):
+            request_estimation("Some transcription")
 
     def test_timeout_raises_estimator_api_error(self) -> None:
         with patch(
             "ui.api_client.httpx.post",
             side_effect=httpx.TimeoutException("Timed out"),
+        ), pytest.raises(EstimatorApiError, match="timed out"):
+            request_estimation("Some transcription")
+
+
+class TestStreamEstimation:
+    def test_yields_token_payloads_and_stops_on_done(self) -> None:
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        response.iter_lines.return_value = [
+            "event: token",
+            "data: Hello ",
+            "data: world",
+            "",
+            "event: token",
+            "data: ## Title",
+            "data: ",
+            "data: Body",
+            "",
+            "event: done",
+            "data: [DONE]",
+            "",
+        ]
+        stream_cm = MagicMock()
+        stream_cm.__enter__.return_value = response
+        stream_cm.__exit__.return_value = False
+
+        with patch("ui.api_client.httpx.stream", return_value=stream_cm) as mock_stream:
+            chunks = list(stream_estimation("Client needs a CRM."))
+
+        assert chunks == ["Hello \nworld", "## Title\n\nBody"]
+        assert mock_stream.call_args.args[0] == "POST"
+        assert mock_stream.call_args.args[1].endswith("/api/v1/estimate/stream")
+
+    def test_error_event_raises_estimator_api_error(self) -> None:
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        response.iter_lines.return_value = [
+            "event: error",
+            "data: provider down",
+            "",
+        ]
+        stream_cm = MagicMock()
+        stream_cm.__enter__.return_value = response
+        stream_cm.__exit__.return_value = False
+
+        with (
+            patch("ui.api_client.httpx.stream", return_value=stream_cm),
+            pytest.raises(EstimatorApiError, match="provider down"),
         ):
-            with pytest.raises(EstimatorApiError, match="timed out"):
-                request_estimation("Some transcription")
+            list(stream_estimation("Client needs a CRM."))
+
+    def test_connect_error_raises_estimator_api_error(self) -> None:
+        with patch(
+            "ui.api_client.httpx.stream",
+            side_effect=httpx.ConnectError("Connection refused"),
+        ), pytest.raises(EstimatorApiError, match="connect"):
+            list(stream_estimation("Some transcription"))
+
+    def test_timeout_raises_estimator_api_error(self) -> None:
+        with patch(
+            "ui.api_client.httpx.stream",
+            side_effect=httpx.TimeoutException("Timed out"),
+        ), pytest.raises(EstimatorApiError, match="timed out"):
+            list(stream_estimation("Some transcription"))

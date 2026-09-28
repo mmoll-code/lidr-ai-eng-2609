@@ -1,14 +1,52 @@
 """Estimation HTTP endpoints."""
 
+import asyncio
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException
+import structlog
+from fastapi import APIRouter, Depends, HTTPException
+from sse_starlette.sse import EventSourceResponse
 
-from app.schemas.estimations import EstimationRequest, EstimationResponse, TokenUsage
-from app.services.llm_service import LlmConfigurationError, generate_estimation
-from app.services.pricing import estimate_cost_usd
+from app.dependencies import get_llm_wrapper
+from app.schemas.estimations import (
+    EstimationRequest,
+    EstimationResponse,
+    StreamEstimationRequest,
+    TokenUsage,
+)
+from app.services import llm_service
+from app.services.evaluation import evaluate_estimation_structure
+from app.services.llm_service import (
+    GenerationOptions,
+    LlmConfigurationError,
+    LLMServiceError,
+    build_system_prompt,
+)
+from app.services.llm_wrapper import LLMWrapper
+
+log = structlog.get_logger()
 
 router = APIRouter(tags=["estimations"])
+_llm_wrapper = Depends(get_llm_wrapper)
+
+
+def _usage_from_result(result: dict) -> TokenUsage | None:
+    raw = result.get("usage")
+    if not isinstance(raw, dict):
+        return None
+    input_tokens = raw.get("input_tokens")
+    output_tokens = raw.get("output_tokens")
+    total_tokens = raw.get("total_tokens")
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+    return TokenUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        preprocessing_input_tokens=raw.get("preprocessing_input_tokens", 0),
+        preprocessing_output_tokens=raw.get("preprocessing_output_tokens", 0),
+    )
 
 
 @router.post(
@@ -25,37 +63,88 @@ router = APIRouter(tags=["estimations"])
     },
 )
 async def create_estimation(request: EstimationRequest) -> EstimationResponse:
+    opts = GenerationOptions(
+        preprocessing=request.preprocessing,
+        example_format=request.example_format,
+        num_examples=request.num_examples,
+        use_examples=request.use_examples,
+        model=request.model,
+        max_tokens=request.max_tokens,
+        thinking_budget=request.thinking_budget,
+    )
     try:
-        result = await generate_estimation(request.transcription)
+        result = llm_service.generate_estimation(request.transcription, opts)
     except LlmConfigurationError as exc:
         raise HTTPException(
             status_code=503,
             detail="LLM provider is not configured correctly",
         ) from exc
+    except LLMServiceError as exc:
+        log.error("estimation_endpoint_error", error=str(exc))
+        raise HTTPException(status_code=502, detail="LLM provider request failed") from exc
     except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail="LLM provider request failed",
-        ) from exc
+        raise HTTPException(status_code=502, detail="LLM provider request failed") from exc
 
-    usage: TokenUsage | None = None
-    if result.input_tokens is not None or result.output_tokens is not None:
-        total: int | None = None
-        if result.input_tokens is not None and result.output_tokens is not None:
-            total = result.input_tokens + result.output_tokens
-        usage = TokenUsage(
-            input_tokens=result.input_tokens,
-            output_tokens=result.output_tokens,
-            total_tokens=total,
+    validation = (
+        evaluate_estimation_structure(result["estimation"], result["finish_reason"])
+        if request.evaluate
+        else None
+    )
+    return EstimationResponse(
+        estimation=result["estimation"],
+        model=result["model"],
+        provider=result["provider"],
+        usage=_usage_from_result(result),
+        estimated_cost_usd=result.get("estimated_cost_usd"),
+        generated_at=datetime.now(UTC),
+        finish_reason=result.get("finish_reason", "stop"),
+        preprocessing=result.get("preprocessing", "none"),
+        extracted_requirements=result.get("extracted_requirements"),
+        latency_ms=result.get("latency_ms", 0),
+        validation=validation,
+        cache_hit=bool(result.get("cache_hit", False)),
+    )
+
+
+@router.post("/estimate/stream")
+async def create_estimation_stream(
+    request: StreamEstimationRequest,
+    wrapper: LLMWrapper = _llm_wrapper,
+) -> EventSourceResponse:
+    """Stream a software estimation token by token via Server-Sent Events."""
+    system_prompt = build_system_prompt()
+
+    async def event_generator() -> AsyncIterator[dict]:
+        loop = asyncio.get_running_loop()
+        chunks = wrapper.complete_stream(
+            system_prompt=system_prompt,
+            user_message=request.transcription,
+            model_override=request.model,
+            max_tokens=request.max_tokens,
         )
 
-    return EstimationResponse(
-        estimation=result.content,
-        model=result.model,
-        provider=result.provider,
-        usage=usage,
-        estimated_cost_usd=estimate_cost_usd(
-            result.model, result.input_tokens, result.output_tokens
-        ),
-        generated_at=datetime.now(UTC),
-    )
+        def _next_chunk() -> str | None:
+            try:
+                return next(chunks)
+            except StopIteration:
+                return None
+            except Exception as exc:
+                log.error(
+                    "estimate_stream_failed",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
+                raise
+
+        try:
+            while True:
+                chunk = await loop.run_in_executor(None, _next_chunk)
+                if chunk is None:
+                    break
+                if chunk:
+                    yield {"event": "token", "data": chunk}
+            yield {"event": "done", "data": "[DONE]"}
+        except Exception as exc:  # noqa: BLE001 — stream failures become an SSE error event
+            yield {"event": "error", "data": str(exc)}
+
+    return EventSourceResponse(event_generator())
