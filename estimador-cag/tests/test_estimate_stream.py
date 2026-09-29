@@ -5,7 +5,12 @@ from fastapi.testclient import TestClient
 from app.dependencies import get_llm_wrapper
 from app.main import app
 
-TRANSCRIPTION = "We need a small CRM with auth, contacts and roles."
+VALID_PAYLOAD = {
+    "description": "We need a small CRM with auth, contacts and roles.",
+    "project_type": "web_saas",
+    "detail_level": "medium",
+    "output_format": "phases_table",
+}
 
 
 class _StubWrapper:
@@ -20,8 +25,8 @@ class _StubWrapper:
         *,
         system_prompt: str,
         user_message: str,
-        model_override: str | None,
-        max_tokens: int,
+        model_override: str | None = None,
+        max_tokens: int = 4000,
     ) -> Iterator[str]:
         self.calls.append(
             {
@@ -41,7 +46,7 @@ def test_stream_endpoint_emits_token_and_done_events() -> None:
         with TestClient(app) as client, client.stream(
             "POST",
             "/api/v1/estimate/stream",
-            json={"transcription": TRANSCRIPTION},
+            json=VALID_PAYLOAD,
         ) as response:
             assert response.status_code == 200
             body = b"".join(response.iter_bytes()).decode()
@@ -50,7 +55,10 @@ def test_stream_endpoint_emits_token_and_done_events() -> None:
         assert "data: estimator." in body
         assert "event: done" in body
         assert len(stub.calls) == 1
-        assert stub.calls[0]["user_message"] == TRANSCRIPTION
+        user_message = stub.calls[0]["user_message"]
+        assert "<project_description>" in user_message
+        assert VALID_PAYLOAD["description"] in user_message
+        assert "senior project estimator" in stub.calls[0]["system_prompt"].lower()
     finally:
         app.dependency_overrides.pop(get_llm_wrapper, None)
 
@@ -63,7 +71,7 @@ def test_stream_endpoint_serialises_multiline_chunk_as_multiple_data_lines() -> 
         with TestClient(app) as client, client.stream(
             "POST",
             "/api/v1/estimate/stream",
-            json={"transcription": TRANSCRIPTION},
+            json=VALID_PAYLOAD,
         ) as response:
             assert response.status_code == 200
             body = b"".join(response.iter_bytes()).decode()
@@ -75,14 +83,14 @@ def test_stream_endpoint_serialises_multiline_chunk_as_multiple_data_lines() -> 
         app.dependency_overrides.pop(get_llm_wrapper, None)
 
 
-def test_stream_endpoint_rejects_blank_transcription() -> None:
+def test_stream_endpoint_rejects_short_description() -> None:
     stub = _StubWrapper(chunks=["irrelevant"])
     app.dependency_overrides[get_llm_wrapper] = lambda: stub
     try:
         with TestClient(app) as client:
             response = client.post(
                 "/api/v1/estimate/stream",
-                json={"transcription": "   "},
+                json={**VALID_PAYLOAD, "description": "too short"},
             )
         assert response.status_code == 422
     finally:

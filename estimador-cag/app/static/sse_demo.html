@@ -13,15 +13,21 @@
         }
         h2 { margin-bottom: 4px; }
         .subtitle { color: #64748b; margin-top: 0; margin-bottom: 24px; }
-        textarea {
+        textarea, select {
             width: 100%;
             padding: 12px;
             font-size: 14px;
             font-family: inherit;
             border: 1px solid #cbd5e1;
             border-radius: 8px;
-            resize: vertical;
             box-sizing: border-box;
+        }
+        textarea { resize: vertical; }
+        label {
+            display: block;
+            margin: 12px 0 4px;
+            font-size: 13px;
+            color: #475569;
         }
         button {
             margin-top: 12px;
@@ -58,7 +64,27 @@
     <h2>Software Estimator</h2>
     <p class="subtitle">Server-Sent Events demo — POST /api/v1/estimate/stream</p>
 
-    <textarea id="transcription" rows="9" placeholder="Paste a meeting transcription here (at least 50 characters)..."></textarea>
+    <label for="project_type">Project type</label>
+    <select id="project_type">
+        <option value="mobile_app">mobile_app</option>
+        <option value="web_saas" selected>web_saas</option>
+        <option value="internal_tool">internal_tool</option>
+        <option value="data_pipeline">data_pipeline</option>
+    </select>
+    <label for="detail_level">Detail level</label>
+    <select id="detail_level">
+        <option value="summary">summary</option>
+        <option value="medium" selected>medium</option>
+        <option value="detailed">detailed</option>
+    </select>
+    <label for="output_format">Output format</label>
+    <select id="output_format">
+        <option value="phases_table" selected>phases_table</option>
+        <option value="line_items">line_items</option>
+        <option value="narrative">narrative</option>
+    </select>
+    <label for="description">Description</label>
+    <textarea id="description" rows="9" placeholder="Describe the project (at least 20 characters)..."></textarea>
     <br>
     <button id="submit" onclick="estimate()">Generate estimation</button>
     <span id="status"></span>
@@ -67,13 +93,13 @@
 
     <script>
     async function estimate() {
-        const text = document.getElementById('transcription').value;
+        const text = document.getElementById('description').value;
         const result = document.getElementById('result');
         const button = document.getElementById('submit');
         const status = document.getElementById('status');
 
-        if (text.trim().length < 50) {
-            status.textContent = 'Need at least 50 characters.';
+        if (text.trim().length < 20) {
+            status.textContent = 'Need at least 20 characters.';
             return;
         }
 
@@ -88,7 +114,12 @@
             const response = await fetch('/api/v1/estimate/stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ transcription: text }),
+                body: JSON.stringify({
+                    description: text,
+                    project_type: document.getElementById('project_type').value,
+                    detail_level: document.getElementById('detail_level').value,
+                    output_format: document.getElementById('output_format').value,
+                }),
             });
 
             if (!response.ok) {

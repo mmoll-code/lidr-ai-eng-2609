@@ -10,15 +10,13 @@ from ui.api_client import Estimation
 from ui.chat_app import build_usage_caption
 
 CHAT_APP_PATH = Path(__file__).resolve().parents[1] / "ui" / "chat_app.py"
+DESCRIPTION = "Client needs a CRM with contacts and role-based access."
 
 
 def _sample_estimation(**overrides: object) -> Estimation:
     data: dict[str, object] = {
-        "content": "## Estimation: CRM\nTotal: 100 hours",
-        "model": "gpt-4o-mini",
-        "provider": "openai",
-        "estimated_cost_usd": 0.000045,
-        "total_tokens": 150,
+        "text": "## Estimation: CRM\nTotal: 100 hours",
+        "prompt_version": "v1",
     }
     data.update(overrides)
     return Estimation(**data)  # type: ignore[arg-type]
@@ -47,23 +45,9 @@ def _run_chat_app() -> AppTest:
 
 
 class TestBuildUsageCaption:
-    def test_includes_provider_model_tokens_and_cost(self) -> None:
+    def test_includes_prompt_version(self) -> None:
         caption = build_usage_caption(_sample_estimation())
-
-        assert "openai" in caption
-        assert "gpt-4o-mini" in caption
-        assert "150" in caption
-        assert "0.000045" in caption
-
-    def test_omits_missing_optional_fields(self) -> None:
-        caption = build_usage_caption(
-            _sample_estimation(estimated_cost_usd=None, total_tokens=None)
-        )
-
-        assert "openai" in caption
-        assert "gpt-4o-mini" in caption
-        assert "tokens" not in caption.lower()
-        assert "$" not in caption
+        assert caption == "prompt v1"
 
 
 class TestChatApp:
@@ -72,43 +56,48 @@ class TestChatApp:
 
         with patch(
             "ui.api_client.httpx.stream",
-            return_value=_stream_context(estimation.content),
+            return_value=_stream_context(estimation.text),
         ) as mock_stream:
             at = _run_chat_app()
-            at.chat_input[0].set_value("Client needs a CRM.").run()
+            at.chat_input[0].set_value(DESCRIPTION).run()
 
         assert not at.exception
         assert len(at.chat_message) == 2
         assert at.chat_message[0].name == "user"
         assert at.chat_message[1].name == "assistant"
-        assert "Client needs a CRM." in at.chat_message[0].markdown[0].value
+        assert DESCRIPTION in at.chat_message[0].markdown[0].value
         assert "Estimation: CRM" in at.chat_message[1].markdown[-1].value
         mock_stream.assert_called_once()
         assert mock_stream.call_args.kwargs["json"] == {
-            "transcription": "Client needs a CRM."
+            "description": DESCRIPTION,
+            "project_type": "web_saas",
+            "detail_level": "medium",
+            "output_format": "phases_table",
         }
+        labels = [item.label for item in at.sidebar.selectbox]
+        assert labels == ["Project type", "Detail level", "Output format"]
         assert any("Primary model" in item.value for item in at.sidebar.markdown)
 
     def test_history_persists_across_submissions(self) -> None:
-        first = _sample_estimation(content="## Estimation: First")
-        second = _sample_estimation(content="## Estimation: Second")
+        first = _sample_estimation(text="## Estimation: First")
+        second = _sample_estimation(text="## Estimation: Second")
 
         with patch(
             "ui.api_client.httpx.stream",
-            side_effect=[_stream_context(first.content), _stream_context(second.content)],
+            side_effect=[_stream_context(first.text), _stream_context(second.text)],
         ):
             at = _run_chat_app()
-            at.chat_input[0].set_value("First transcription").run()
-            at.chat_input[0].set_value("Second transcription").run()
+            at.chat_input[0].set_value("First project: a small inventory tool.").run()
+            at.chat_input[0].set_value("Second project: a mobile booking app.").run()
 
         assert not at.exception
         assert len(at.chat_message) == 4
         assert at.chat_message[0].name == "user"
-        assert "First transcription" in at.chat_message[0].markdown[0].value
+        assert "First project" in at.chat_message[0].markdown[0].value
         assert at.chat_message[1].name == "assistant"
         assert "Estimation: First" in at.chat_message[1].markdown[-1].value
         assert at.chat_message[2].name == "user"
-        assert "Second transcription" in at.chat_message[2].markdown[0].value
+        assert "Second project" in at.chat_message[2].markdown[0].value
         assert at.chat_message[3].name == "assistant"
         assert "Estimation: Second" in at.chat_message[3].markdown[-1].value
 
@@ -118,7 +107,7 @@ class TestChatApp:
             side_effect=httpx.ConnectError("Connection refused"),
         ):
             at = _run_chat_app()
-            at.chat_input[0].set_value("Some transcription").run()
+            at.chat_input[0].set_value(DESCRIPTION).run()
 
         assert not at.exception
         assert len(at.chat_message) == 2

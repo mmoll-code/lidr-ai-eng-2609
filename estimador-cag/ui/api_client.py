@@ -1,4 +1,4 @@
-"""HTTP client for the Estimator CAG API."""
+"""HTTP client for the Estimator API."""
 
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -8,28 +8,32 @@ import httpx
 
 from ui.config import ui_settings
 
+MIN_DESCRIPTION_LENGTH = 20
+
 
 class EstimatorApiError(Exception):
     """Raised when the Estimator API request fails."""
 
 
 @dataclass(frozen=True)
+class EstimationInput:
+    description: str
+    project_type: str
+    detail_level: str
+    output_format: str
+
+
+@dataclass(frozen=True)
 class Estimation:
-    content: str
-    model: str
-    provider: str
-    estimated_cost_usd: float | None
-    total_tokens: int | None
+    text: str
+    prompt_version: str
 
 
-def stream_estimation(transcription: str) -> Iterator[str]:
+def stream_estimation(estimation_input: EstimationInput) -> Iterator[str]:
     """POST to the SSE endpoint and yield text chunks as they arrive."""
-    if not transcription or not transcription.strip():
-        raise ValueError("Transcription must not be empty")
-
+    payload = _payload(estimation_input)
     url = f"{ui_settings.estimator_api_url.rstrip('/')}/api/v1/estimate/stream"
     timeout = ui_settings.estimator_request_timeout_seconds
-    payload = {"transcription": transcription.strip()}
 
     try:
         with httpx.stream(
@@ -76,20 +80,14 @@ def _iter_sse_tokens(response: httpx.Response) -> Iterator[str]:
             data_lines.append(raw_line[6:] if raw_line.startswith("data: ") else raw_line[5:])
 
 
-def request_estimation(transcription: str) -> Estimation:
+def request_estimation(estimation_input: EstimationInput) -> Estimation:
     """Request a software estimation from the Estimator API."""
-    if not transcription or not transcription.strip():
-        raise ValueError("Transcription must not be empty")
-
+    payload = _payload(estimation_input)
     url = f"{ui_settings.estimator_api_url.rstrip('/')}/api/v1/estimate"
     timeout = ui_settings.estimator_request_timeout_seconds
 
     try:
-        response = httpx.post(
-            url,
-            json={"transcription": transcription.strip()},
-            timeout=timeout,
-        )
+        response = httpx.post(url, json=payload, timeout=timeout)
         response.raise_for_status()
     except httpx.ConnectError as exc:
         raise EstimatorApiError(
@@ -107,12 +105,24 @@ def request_estimation(transcription: str) -> Estimation:
     return _parse_estimation(response.json())
 
 
+def _payload(estimation_input: EstimationInput) -> dict[str, str]:
+    description = estimation_input.description.strip()
+    if len(description) < MIN_DESCRIPTION_LENGTH:
+        raise ValueError("Description must be at least 20 characters")
+    return {
+        "description": description,
+        "project_type": estimation_input.project_type,
+        "detail_level": estimation_input.detail_level,
+        "output_format": estimation_input.output_format,
+    }
+
+
 def _message_for_status(response: httpx.Response) -> str:
     detail = _extract_detail(response)
     if response.status_code == 503:
         return detail or "LLM provider is not configured correctly"
     if response.status_code == 502:
-        return detail or "LLM provider request failed"
+        return detail or "Upstream LLM call failed"
     if detail:
         return f"Estimator API error ({response.status_code}): {detail}"
     return f"Estimator API error ({response.status_code})"
@@ -131,22 +141,7 @@ def _extract_detail(response: httpx.Response) -> str | None:
 
 
 def _parse_estimation(payload: dict[str, Any]) -> Estimation:
-    usage = payload.get("usage")
-    total_tokens: int | None = None
-    if isinstance(usage, dict):
-        raw_total = usage.get("total_tokens")
-        if isinstance(raw_total, int):
-            total_tokens = raw_total
-
-    cost = payload.get("estimated_cost_usd")
-    estimated_cost_usd = cost if isinstance(cost, (int, float)) else None
-
     return Estimation(
-        content=str(payload["estimation"]),
-        model=str(payload["model"]),
-        provider=str(payload["provider"]),
-        estimated_cost_usd=float(estimated_cost_usd)
-        if estimated_cost_usd is not None
-        else None,
-        total_tokens=total_tokens,
+        text=str(payload["text"]),
+        prompt_version=str(payload["prompt_version"]),
     )

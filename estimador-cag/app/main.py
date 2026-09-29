@@ -52,14 +52,12 @@ def _cors_origins() -> list[str]:
 app = FastAPI(
     title="Estimador CAG API",
     description=(
-        "CAG-based (Cache/Context-Augmented Generation) estimator for software "
-        "development effort.\n\n"
-        "It injects a fixed set of example estimations into the LLM context and "
-        "estimates new work by analogy. Responses are cached in Redis by exact "
-        "prompt match, and a LiteLLM router falls back to a secondary provider.\n\n"
+        "Software effort estimator that renders a versioned prompt from a project "
+        "description, project type, detail level, and output format.\n\n"
+        "Responses are cached in Redis by exact prompt match, and a LiteLLM router "
+        "falls back to a secondary provider.\n\n"
         "## Endpoints\n\n"
-        "- `POST /api/v1/estimate` — generate an effort estimation from a "
-        "video-call transcription\n"
+        "- `POST /api/v1/estimate` — generate a free-text effort estimation\n"
         "- `POST /api/v1/estimate/stream` — stream the estimation as Server-Sent Events\n"
         "- `GET /health` — liveness check"
     ),

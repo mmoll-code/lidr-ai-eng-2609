@@ -1,8 +1,8 @@
 # Estimador CAG
 
-CAG-based (Cache/Context-Augmented Generation) estimator for software development effort.
+Software effort estimator that renders a versioned prompt from a project description, project type, detail level, and output format.
 
-It injects a fixed set of example estimations into the LLM context and estimates new work by analogy.
+Responses are cached in Redis by exact prompt match, and a LiteLLM router falls back to a secondary provider.
 
 ## Requirements
 
@@ -36,13 +36,22 @@ Health check: `GET http://localhost:8000/health`
 
 ## Estimate endpoint
 
-`POST /api/v1/estimate` — generate a software estimation from a video-call transcription.
+`POST /api/v1/estimate` — generate a free-text software estimation.
+
+All four request fields are required. `description` must be between 20 and 80000 characters.
+
+- `project_type`: `mobile_app`, `web_saas`, `internal_tool`, `data_pipeline`
+- `detail_level`: `summary`, `medium`, `detailed`
+- `output_format`: `phases_table`, `line_items`, `narrative`
 
 **Request**
 
 ```json
 {
-  "transcription": "En la reunión con el cliente se discutió la necesidad de..."
+  "description": "A small B2B SaaS to manage employee equipment loans across teams.",
+  "project_type": "web_saas",
+  "detail_level": "medium",
+  "output_format": "phases_table"
 }
 ```
 
@@ -50,44 +59,18 @@ Health check: `GET http://localhost:8000/health`
 
 ```json
 {
-  "estimation": "## Estimación: ...\n\n### Desglose de tareas:\n...",
-  "model": "gpt-4o-mini",
-  "provider": "openai",
-  "usage": {
-    "input_tokens": 100,
-    "output_tokens": 50,
-    "total_tokens": 150
-  },
-  "estimated_cost_usd": 0.000045,
-  "generated_at": "2026-03-22T13:00:00+00:00",
-  "finish_reason": "stop",
-  "preprocessing": "none",
-  "cache_hit": false,
-  "latency_ms": 840,
-  "validation": {
-    "score": 1.0,
-    "issues": []
-  }
+  "text": "## Estimation\n\n| phase | duration_weeks | cost_eur | confidence_pct |\n...",
+  "prompt_version": "v1"
 }
 ```
 
-Optional request knobs: `preprocessing` (`none`, `inline_cleaning`, `two_phase`), `example_format` (`markdown`, `json`, `narrative`), `num_examples`, `use_examples`, `model`, `max_tokens`, `thinking_budget`, and `evaluate`.
-
-Sending the same prompt twice returns `"cache_hit": true` on the second response while the cached text is still valid.
+The response is free text plus the prompt template version. Token usage and cache status stay inside the LLM wrapper.
 
 ```bash
 curl -s localhost:8000/api/v1/estimate -H 'Content-Type: application/json' \
-  -d '{"transcription": "We need a small CRM with auth, contacts and roles. MVP six weeks."}'
+  -d '{"description":"We need a small CRM with auth, contacts and roles. MVP six weeks.","project_type":"web_saas","detail_level":"medium","output_format":"phases_table"}'
 
 docker compose exec redis redis-cli KEYS 'estimation:*'
-```
-
-**curl**
-
-```bash
-curl -X POST http://localhost:8000/api/v1/estimate \
-  -H "Content-Type: application/json" \
-  -d '{"transcription": "En la reunion con el cliente se discutio..."}'
 ```
 
 OpenAPI docs: `http://localhost:8000/docs`
@@ -101,12 +84,12 @@ HTML demo: [http://localhost:8000/static/sse_demo.html](http://localhost:8000/st
 ```bash
 curl -N -X POST http://localhost:8000/api/v1/estimate/stream \
   -H 'Content-Type: application/json' \
-  -d '{"transcription": "We need a small CRM with auth, contacts and roles. MVP six weeks."}'
+  -d '{"description":"We need a small CRM with auth, contacts and roles. MVP six weeks.","project_type":"web_saas","detail_level":"medium","output_format":"phases_table"}'
 ```
 
 ## Chat UI
 
-Streamlit chat interface that streams a meeting transcription to the Estimator API.
+Streamlit chat interface that streams a project description to the Estimator API. The sidebar sets project type, detail level, and output format.
 
 The LLM API key stays in the backend `.env` — the UI only needs the API base URL.
 
@@ -134,15 +117,14 @@ app/
 │   └── estimations.py      # POST /estimate and /estimate/stream
 ├── schemas/
 │   └── estimations.py      # Request/response models
+├── prompts/
+│   ├── loader.py           # Jinja2 renderer for versioned prompts
+│   └── estimation/v1/      # system, user, and examples templates
 ├── services/
-│   ├── llm_service.py      # Prompt knobs and two-phase preprocessing
 │   ├── llm_wrapper.py      # LiteLLM fallback, cache, and cost
 │   ├── cache.py            # Redis exact-match cache
-│   ├── evaluation.py       # Structural checks on generated estimations
 │   └── pricing.py          # Approximate USD cost estimation
-├── context/
-│   └── examples.py         # Canonical estimations injected into the prompt
-├── fixtures/               # Sample transcriptions
+├── fixtures/               # Sample project descriptions
 └── static/sse_demo.html    # Browser SSE demo
 ui/
 ├── chat_app.py             # Streamlit chat entrypoint
