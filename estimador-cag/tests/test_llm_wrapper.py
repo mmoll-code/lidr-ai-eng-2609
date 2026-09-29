@@ -79,6 +79,22 @@ def test_complete_returns_normalised_dict_and_caches(wrapper: LLMWrapper) -> Non
     assert "estimated_cost_usd" in cached
 
 
+def test_complete_sends_separate_system_and_user_messages(wrapper: LLMWrapper) -> None:
+    fake = _fake_completion(model="gpt-4o-mini")
+    with patch.object(wrapper.router, "completion", return_value=fake) as mocked:
+        wrapper.complete(
+            system_prompt="sys",
+            user_message="usr",
+            model_override=None,
+            max_tokens=4000,
+            thinking_budget=None,
+        )
+    assert mocked.call_args.kwargs["messages"] == [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "usr"},
+    ]
+
+
 def test_complete_with_model_override_bypasses_router(wrapper: LLMWrapper) -> None:
     fake = _fake_completion(model="gpt-4o", content="overridden")
     with (
